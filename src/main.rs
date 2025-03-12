@@ -3,10 +3,8 @@ use rdev::{
     EventType::{KeyPress, KeyRelease},
     Key, SimulateError, listen, simulate,
 };
-use std::thread::sleep;
 use std::time::Duration;
-
-const DELAY: Duration = Duration::from_millis(4);
+use std::{num::ParseIntError, thread::sleep};
 
 const fn key_from_char(c: char) -> Key {
     match c {
@@ -39,44 +37,61 @@ fn parse_courses(arg: &str) -> Result<[Key; 5], String> {
         .map_err(|_| "Failed to convert character vector into fixed array".to_string())?)
 }
 
+fn parse_ms(s: &str) -> Result<Duration, ParseIntError> {
+    s.parse::<u64>().map(|v| Duration::from_millis(v))
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct Config {
     #[arg(required = true, num_args = ..=10, value_parser = parse_courses)]
     courses: Vec<[Key; 5]>,
+
+    #[arg(short, long, default_value = "2", value_parser = parse_ms)]
+    ms: Duration,
 }
 
-fn send(k: Key) -> Result<(), SimulateError> {
-    sleep(DELAY);
+impl Config {
+    pub fn courses(&self) -> &[[Key; 5]] {
+        self.courses.as_slice()
+    }
+
+    pub const fn delay(&self) -> Duration {
+        self.ms
+    }
+}
+
+fn send(k: Key, delay: Duration) -> Result<(), SimulateError> {
+    sleep(delay);
     simulate(&KeyPress(k))?;
-    sleep(DELAY);
+    sleep(delay);
     simulate(&KeyRelease(k))
 }
 
-fn handle_sim(courses: Vec<[Key; 5]>) -> Result<(), SimulateError> {
+fn handle_sim(courses: &[[Key; 5]], delay: Duration) -> Result<(), SimulateError> {
     let n = courses.len();
 
     for (i, course) in courses.into_iter().enumerate() {
         for key in course {
-            send(key)?;
+            send(*key, delay)?;
         }
         if i < n - 1 {
-            send(Key::Tab)?;
+            send(Key::Tab, delay)?;
         }
     }
-    send(Key::Return)?;
+    send(Key::Return, delay)?;
     Ok(())
 }
 
 fn main() {
-    let courses = Config::parse().courses;
+    let cfg = Config::parse();
 
     println!("\nAction key: 'ESC'\nPress 'CTRL-C' to quit.\n");
 
     if let Err(e) = listen(move |e| {
         if let KeyPress(k) = e.event_type {
             if let Key::Escape = k {
-                if let Err(e) = handle_sim(courses.clone()) {
+                if let Err(e) = handle_sim(cfg.courses(), cfg.delay()) {
                     eprintln!("{:?}", e)
                 }
             }
